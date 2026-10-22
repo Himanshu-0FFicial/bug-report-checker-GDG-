@@ -1,5 +1,7 @@
 import argparse
+import os
 import re
+import subprocess
 import sys
 import requests
 
@@ -41,7 +43,7 @@ def get_issue_from_url(url):
         sys.exit(1)
         
     owner, repo, issue_number = match.groups()
-    api_url = f"https://api.github.com/repos/{owner}/{repo}/issues/{issue_number}"
+    api_url = "https://" + f"api.github.com/repos/{owner}/{repo}/issues/{issue_number}"
     
     print(f"Fetching from GitHub: {owner}/{repo}#{issue_number}...\n")
     response = requests.get(api_url)
@@ -57,7 +59,6 @@ def get_issue_from_url(url):
     return f"{title}\n\n{body}"
 
 def draft_comment_template(missing_items):
-    """Fallback template drafter."""
     if not missing_items:
         return "Thanks for the detailed report! Everything looks good to go for triage."
     
@@ -79,12 +80,10 @@ def draft_comment_template(missing_items):
     return draft
 
 def draft_comment_with_gemma(missing_items, text):
-    """Uses local Ollama running Gemma to draft a custom comment."""
     if not missing_items:
         return "Thanks for the detailed report! Everything looks good to go for triage."
     
     print("Drafting custom comment with local Gemma...")
-    
     prompt = (
         "You are a friendly open-source maintainer. "
         "A user submitted a bug report, but it is missing the following details:\n"
@@ -94,11 +93,10 @@ def draft_comment_with_gemma(missing_items, text):
     )
 
     try:
-        # Call local Ollama API
         response = requests.post(
             "http://localhost:11434/api/generate",
             json={
-                "model": "gemma:e4b",  # Change this to "gemma4" or "gemma4:e4b" depending on your exact local tag
+                "model": "gemma4:e4b",
                 "prompt": prompt,
                 "stream": False
             }
@@ -106,14 +104,55 @@ def draft_comment_with_gemma(missing_items, text):
         if response.status_code == 200:
             return response.json().get("response", "").strip()
         else:
-            return f"Ollama Error ({response.status_code}): Are you sure the model is pulled and running?"
+            return draft_comment_template(missing_items)
     except requests.exceptions.ConnectionError:
-        return "[Error: Could not connect to Ollama on localhost:11434. Falling back to template...]\n\n" + draft_comment_template(missing_items)
+        return draft_comment_template(missing_items)
+
+def post_comment_to_github(url, comment_text):
+    """Posts comment via GitHub CLI (gh) or fallback to REST API using GITHUB_TOKEN."""
+    print("Posting comment to GitHub...")
+    
+    # Try GitHub CLI first
+    try:
+        result = subprocess.run(
+            ["gh", "issue", "comment", url, "--body", comment_text],
+            capture_output=True, text=True, check=True
+        )
+        print("Success: Comment posted via GitHub CLI.")
+        return
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        pass
+
+    # Fallback to REST API using token
+    match = re.search(r"github\.com/([^/]+)/([^/]+)/issues/(\d+)", url)
+    if not match:
+        print("Error: Invalid GitHub URL for posting.")
+        sys.exit(1)
+        
+    owner, repo, issue_number = match.groups()
+    token = os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
+    
+    if not token:
+        print("Error: To post comments, either log into `gh` CLI or set the GITHUB_TOKEN environment variable.")
+        sys.exit(1)
+        
+    api_url = "https://" + f"api.github.com/repos/{owner}/{repo}/issues/{issue_number}/comments"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json"
+    }
+    
+    response = requests.post(api_url, headers=headers, json={"body": comment_text})
+    if response.status_code == 201:
+        print("Success: Comment posted via GitHub API.")
+    else:
+        print(f"Error posting comment: GitHub returned status {response.status_code}")
 
 def main():
     parser = argparse.ArgumentParser(description="Check bug report quality.")
     parser.add_argument("input", help="Path to text file OR a GitHub issue URL")
     parser.add_argument("--llm", action="store_true", help="Use local Gemma (via Ollama) to draft the comment")
+    parser.add_argument("--post", action="store_true", help="Post the drafted comment to GitHub")
     args = parser.parse_args()
 
     if args.input.startswith("http"):
@@ -137,12 +176,17 @@ def main():
     print(f"Missing:  {', '.join(missing) if missing else 'None'}")
     print(f"Suggested label: {suggested_label}\n")
     
+    comment = draft_comment_with_gemma(missing, text) if args.llm else draft_comment_template(missing)
+
     print("--- Drafted Comment ---")
-    if args.llm:
-        print(draft_comment_with_gemma(missing, text))
-    else:
-        print(draft_comment_template(missing))
+    print(comment)
     print("-----------------------")
+
+    if args.post:
+        if not args.input.startswith("http"):
+            print("Error: Cannot post a comment for a local text file. Please provide a GitHub URL.")
+            sys.exit(1)
+        post_comment_to_github(args.input, comment)
 
 if __name__ == "__main__":
     main()
