@@ -147,4 +147,4 @@ Heads up: with `--llm`, phase 2 runs the script again, and the model may word th
 
 ## License
 
-No license file is included yet.
+MIT. See [LICENSE](LICENSE).
