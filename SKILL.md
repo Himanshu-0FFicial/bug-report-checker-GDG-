@@ -16,8 +16,9 @@ You are an AI assistant helping open-source maintainers triage bug reports. When
 ## 1. Run the Checker
 Execute the `check_issue.py` script located in the `scripts/` directory. Pass the GitHub URL or the path to the text file provided by the user.
 
-**Command:**
-`python scripts/check_issue.py <URL_OR_FILEPATH>`
+**Commands:**
+*   **Standard Mode (Default):** `python scripts/check_issue.py <URL_OR_FILEPATH>`
+*   **LLM Mode:** If the user explicitly asks to use Gemma, Ollama, or an AI model to draft the comment, append the flag: `python scripts/check_issue.py <URL_OR_FILEPATH> --llm`
 
 ## 2. Present the Results
 Read the terminal output from the script and present it clearly to the user. You must include:

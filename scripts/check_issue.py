@@ -41,7 +41,7 @@ def get_issue_from_url(url):
         sys.exit(1)
         
     owner, repo, issue_number = match.groups()
-    api_url = "https://" + f"[api.github.com/repos/](https://api.github.com/repos/){owner}/{repo}/issues/{issue_number}"
+    api_url = f"https://api.github.com/repos/{owner}/{repo}/issues/{issue_number}"
     
     print(f"Fetching from GitHub: {owner}/{repo}#{issue_number}...\n")
     response = requests.get(api_url)
@@ -98,7 +98,7 @@ def draft_comment_with_gemma(missing_items, text):
         response = requests.post(
             "http://localhost:11434/api/generate",
             json={
-                "model": "gemma",  # Change this to "gemma4" or "gemma4:e4b" depending on your exact local tag
+                "model": "gemma:e4b",  # Change this to "gemma4" or "gemma4:e4b" depending on your exact local tag
                 "prompt": prompt,
                 "stream": False
             }
