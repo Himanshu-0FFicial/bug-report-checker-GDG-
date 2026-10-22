@@ -4,13 +4,9 @@ import sys
 import requests
 
 def check_issue_text(text):
-    """
-    Scans the issue text against a checklist of required information.
-    """
     checks = {
         "Steps to reproduce": r"(steps to reproduce|repro steps|how to reproduce|steps:)",
         "Expected behavior": r"(expected behavior|expected|what should happen)",
-        # Added "current behavior" to this regex
         "Actual behavior": r"(actual behavior|current behavior|what happened|actual|bug description)",
         "Environment/version": r"(environment|os|version|windows|mac|linux|ubuntu)",
         "Logs/stack trace": r"(logs|stack trace|traceback|error message|exception)",
@@ -39,19 +35,15 @@ def check_issue_text(text):
     return present, missing
 
 def get_issue_from_url(url):
-    """
-    Extracts owner, repo, and issue number from URL, then calls GitHub API.
-    """
     match = re.search(r"github\.com/([^/]+)/([^/]+)/issues/(\d+)", url)
     if not match:
         print("Error: Invalid GitHub issue URL.")
         sys.exit(1)
         
     owner, repo, issue_number = match.groups()
-    api_url = "https://" + f"api.github.com/repos/{owner}/{repo}/issues/{issue_number}"
+    api_url = "https://" + f"[api.github.com/repos/](https://api.github.com/repos/){owner}/{repo}/issues/{issue_number}"
     
     print(f"Fetching from GitHub: {owner}/{repo}#{issue_number}...\n")
-    
     response = requests.get(api_url)
     
     if response.status_code != 200:
@@ -64,22 +56,19 @@ def get_issue_from_url(url):
     
     return f"{title}\n\n{body}"
 
-def draft_comment(missing_items):
-    """
-    Generates a polite follow-up comment asking for the missing items.
-    """
+def draft_comment_template(missing_items):
+    """Fallback template drafter."""
     if not missing_items:
         return "Thanks for the detailed report! Everything looks good to go for triage."
     
-    # Friendly translations for the checklist items
     prompts = {
-        "Clear title": "A more descriptive title so we know exactly what this is about at a glance",
-        "Steps to reproduce": "The exact steps you took before the issue occurred",
+        "Clear title": "A more descriptive title",
+        "Steps to reproduce": "The exact steps you took",
         "Expected behavior": "What you expected to happen",
-        "Actual behavior": "What actually happened (or the current behavior)",
+        "Actual behavior": "What actually happened",
         "Environment/version": "Your OS and library versions",
         "Logs/stack trace": "Any error messages, logs, or stack traces",
-        "Code block": "A minimal reproducible example or code snippet",
+        "Code block": "A minimal reproducible example",
         "Regression info": "Whether this worked in a previous version"
     }
     
@@ -89,9 +78,42 @@ def draft_comment(missing_items):
     draft += "Once we have these, we can look into it."
     return draft
 
+def draft_comment_with_gemma(missing_items, text):
+    """Uses local Ollama running Gemma to draft a custom comment."""
+    if not missing_items:
+        return "Thanks for the detailed report! Everything looks good to go for triage."
+    
+    print("Drafting custom comment with local Gemma...")
+    
+    prompt = (
+        "You are a friendly open-source maintainer. "
+        "A user submitted a bug report, but it is missing the following details:\n"
+        f"{', '.join(missing_items)}.\n\n"
+        "Write a short, polite GitHub comment (under 4 sentences) thanking them and asking ONLY for these missing items. "
+        "Do not invent any other requests."
+    )
+
+    try:
+        # Call local Ollama API
+        response = requests.post(
+            "http://localhost:11434/api/generate",
+            json={
+                "model": "gemma",  # Change this to "gemma4" or "gemma4:e4b" depending on your exact local tag
+                "prompt": prompt,
+                "stream": False
+            }
+        )
+        if response.status_code == 200:
+            return response.json().get("response", "").strip()
+        else:
+            return f"Ollama Error ({response.status_code}): Are you sure the model is pulled and running?"
+    except requests.exceptions.ConnectionError:
+        return "[Error: Could not connect to Ollama on localhost:11434. Falling back to template...]\n\n" + draft_comment_template(missing_items)
+
 def main():
     parser = argparse.ArgumentParser(description="Check bug report quality.")
     parser.add_argument("input", help="Path to text file OR a GitHub issue URL")
+    parser.add_argument("--llm", action="store_true", help="Use local Gemma (via Ollama) to draft the comment")
     args = parser.parse_args()
 
     if args.input.startswith("http"):
@@ -116,7 +138,10 @@ def main():
     print(f"Suggested label: {suggested_label}\n")
     
     print("--- Drafted Comment ---")
-    print(draft_comment(missing))
+    if args.llm:
+        print(draft_comment_with_gemma(missing, text))
+    else:
+        print(draft_comment_template(missing))
     print("-----------------------")
 
 if __name__ == "__main__":
